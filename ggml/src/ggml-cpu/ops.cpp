@@ -10980,9 +10980,17 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
             ? state_work
             : state_out_base + (iv3 * H + iv1) * S_v * S_v;
 
-        // copy input state into the working buffer and operate in-place
-        // state layout [S_v, S_v, H, n_seqs]: seq iv3 starts at iv3 * state_seq_stride.
-        const float * s_in = state_in_base + iv3 * state_seq_stride + iv1 * S_v * S_v;
+        // copy input state into the working buffer and operate in-place.
+        // Ordinary GDN addresses the state by sequence. The indexed variant reads
+        // the dynamic row selector from src[6] so graph replay can reuse the same
+        // graph while selecting a different persistent recurrent-state row.
+        int64_t state_row = iv3;
+        if (dst->op == GGML_OP_GATED_DELTA_NET_INDEXED) {
+            GGML_ASSERT(dst->src[6] && dst->src[6]->type == GGML_TYPE_I32);
+            state_row = ((const int32_t *) dst->src[6]->data)[iv3];
+            GGML_ASSERT(state_row >= 0 && state_row < src_state->ne[3]);
+        }
+        const float * s_in = state_in_base + state_row * state_seq_stride + iv1 * S_v * S_v;
         memcpy(s_out, s_in, S_v * S_v * sizeof(float));
 
         // attn output pointer for first token of this (head, seq)

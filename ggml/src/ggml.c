@@ -1099,9 +1099,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_SGD",
 
     "GLU",
+    "GATED_DELTA_NET_INDEXED",
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1214,9 +1215,10 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "sgd(x)",
 
     "glu(x)",
+    "gated_delta_net_indexed(q,k,v,g,b,bank,rows)",
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -6415,6 +6417,36 @@ struct ggml_tensor * ggml_gated_delta_net(
     result->src[4] = beta;
     result->src[5] = state;
 
+    return result;
+}
+
+// ggml_gated_delta_net_indexed
+
+struct ggml_tensor * ggml_gated_delta_net_indexed(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * q,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * v,
+        struct ggml_tensor  * g,
+        struct ggml_tensor  * beta,
+        struct ggml_tensor  * bank,
+        struct ggml_tensor  * rows,
+        struct ggml_tensor  * state_dependency,
+        int64_t               K) {
+    GGML_ASSERT(bank->type == GGML_TYPE_F32 && ggml_is_contiguous(bank));
+    GGML_ASSERT(rows->type == GGML_TYPE_I32 && ggml_is_contiguous(rows));
+    GGML_ASSERT(ggml_is_vector(rows) && ggml_nelements(rows) == v->ne[3]);
+    GGML_ASSERT(bank->ne[3] >= v->ne[3]);
+
+    struct ggml_tensor * shape = ggml_view_4d(ctx, bank,
+            bank->ne[0], bank->ne[1], bank->ne[2], v->ne[3],
+            bank->nb[1], bank->nb[2], bank->nb[3], 0);
+
+    struct ggml_tensor * result = ggml_gated_delta_net(ctx, q, k, v, g, beta, shape, K);
+    result->op     = GGML_OP_GATED_DELTA_NET_INDEXED;
+    result->src[5] = bank;
+    result->src[6] = rows;
+    result->src[7] = state_dependency;
     return result;
 }
 

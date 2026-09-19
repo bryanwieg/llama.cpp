@@ -2390,6 +2390,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             ggml_cuda_op_gated_linear_attn(ctx, dst);
             break;
         case GGML_OP_GATED_DELTA_NET:
+        case GGML_OP_GATED_DELTA_NET_INDEXED:
             ggml_cuda_op_gated_delta_net(ctx, dst);
             break;
         case GGML_OP_DSV4_HC_COMB:
@@ -5492,6 +5493,18 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_GATED_LINEAR_ATTN:
         case GGML_OP_RWKV_WKV7:
             return true;
+        case GGML_OP_GATED_DELTA_NET_INDEXED:
+#if defined(GGML_USE_HIP)
+            return GGML_CUDA_CC_IS_RDNA4(ggml_cuda_info().devices[dev_ctx->device].cc)
+                && op->src[2]->ne[0] == 128 && op->src[2]->ne[1] == 48 && op->src[2]->ne[3] == 1
+                && op->src[2]->ne[2] >= 1 && op->src[2]->ne[2] <= 3
+                && op->src[0]->ne[1] == 16 && op->src[0]->ne[3] == 1
+                && op->src[3]->ne[0] == 1 && ggml_get_op_params_i32(op, 0) == 3
+                && op->src[5]->type == GGML_TYPE_F32 && ggml_is_contiguous(op->src[5])
+                && op->src[6] && op->src[6]->type == GGML_TYPE_I32 && ggml_is_contiguous(op->src[6]);
+#else
+            return false;
+#endif
         case GGML_OP_GATED_DELTA_NET:
             //TODO: enable once MUSA compiler is solved https://github.com/ggml-org/llama.cpp/pull/19504#issuecomment-4018634327
 #ifdef GGML_USE_MUSA
@@ -5684,8 +5697,29 @@ static ggml_backend_feature * ggml_backend_cuda_get_features(ggml_backend_reg_t 
     GGML_UNUSED(reg);
 }
 
+static bool ggml_backend_rocm_gdn_indexed_bank_supported(ggml_backend_buffer_type_t buft) {
+#if defined(GGML_USE_HIP)
+    if (!buft || !ggml_backend_buft_is_cuda(buft)) {
+        return false;
+    }
+    const auto dev = ggml_backend_buft_get_device(buft);
+    if (!dev) {
+        return false;
+    }
+    const auto * dev_ctx = (const ggml_backend_cuda_device_context *) dev->context;
+    return buft == ggml_backend_cuda_buffer_type(dev_ctx->device)
+        && GGML_CUDA_CC_IS_RDNA4(ggml_cuda_info().devices[dev_ctx->device].cc);
+#else
+    GGML_UNUSED(buft);
+    return false;
+#endif
+}
+
 static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, const char * name) {
     GGML_UNUSED(reg);
+    if (strcmp(name, "ggml_backend_rocm_gdn_indexed_bank_supported") == 0) {
+        return (void *) ggml_backend_rocm_gdn_indexed_bank_supported;
+    }
     if (strcmp(name, "ggml_backend_comm_init") == 0) {
         return (void *)ggml_backend_cuda_comm_init;
     }
