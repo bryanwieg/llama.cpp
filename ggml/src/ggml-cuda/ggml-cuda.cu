@@ -880,13 +880,23 @@ static bool ggml_backend_buft_is_cuda(ggml_backend_buffer_type_t buft) {
     return buft->iface.get_name == ggml_backend_cuda_buffer_type_get_name;
 }
 
+#include "ggml-cuda/hot-buffer-reserve.cuh"
+
 static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     ggml_backend_cuda_buffer_type_context * buft_ctx = (ggml_backend_cuda_buffer_type_context *)buft->context;
 
     ggml_cuda_set_device(buft_ctx->device);
 
     void * dev_ptr;
-    cudaError_t err = ggml_cuda_device_malloc(&dev_ptr, size, buft_ctx->device);
+    cudaError_t err;
+#if defined(GGML_USE_HIP) && defined(_WIN32)
+    if (ggml_rocm_mtp2_reserve_enabled()) {
+        err = ggml_rocm_mtp2_reserve_allocate(&dev_ptr, size, buft_ctx->device);
+    } else
+#endif
+    {
+        err = ggml_cuda_device_malloc(&dev_ptr, size, buft_ctx->device);
+    }
     if (err != cudaSuccess) {
         // clear the error
         (void)cudaGetLastError();
