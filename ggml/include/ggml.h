@@ -601,6 +601,10 @@ extern "C" {
 
         GGML_OP_GLU,
 
+        // Project-local inference op: select the recurrent-state bank row on device.
+        // Appended to preserve all existing operation IDs.
+        GGML_OP_GATED_DELTA_NET_INDEXED,
+
         GGML_OP_COUNT,
     };
 
@@ -2657,6 +2661,20 @@ extern "C" {
             struct ggml_tensor  * g,
             struct ggml_tensor  * beta,
             struct ggml_tensor  * state,
+            int64_t               K);
+
+    // Read the initial recurrent state directly from a persistent state bank
+    // using one I32 row index per sequence.
+    GGML_API struct ggml_tensor * ggml_gated_delta_net_indexed(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * q,
+            struct ggml_tensor  * k,
+            struct ggml_tensor  * v,
+            struct ggml_tensor  * g,
+            struct ggml_tensor  * beta,
+            struct ggml_tensor  * bank,
+            struct ggml_tensor  * rows,
+            struct ggml_tensor  * state_dependency,
             int64_t               K);
 
     // DSA lightning indexer

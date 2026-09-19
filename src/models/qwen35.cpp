@@ -1,6 +1,27 @@
 #include "models.h"
 #include "llama-memory-recurrent.h"
 
+#include <cstdlib>
+#include <cstring>
+
+static bool rocm_gdn_indexed_bank_supported(ggml_tensor * bank) {
+    if (!bank->buffer) {
+        return false;
+    }
+
+    const auto buft = ggml_backend_buffer_get_type(bank->buffer);
+    const auto dev  = ggml_backend_buft_get_device(buft);
+    if (!dev) {
+        return false;
+    }
+
+    using query_t = bool (*)(ggml_backend_buffer_type_t);
+    const auto query = reinterpret_cast<query_t>(ggml_backend_reg_get_proc_address(
+            ggml_backend_dev_backend_reg(dev), "ggml_backend_rocm_gdn_indexed_bank_supported"));
+
+    return query && query(buft);
+}
+
 void llama_model_qwen35::load_arch_hparams(llama_model_loader & ml) {
     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,       hparams.f_norm_rms_eps);
     ml.get_key_or_arr(LLM_KV_ROPE_DIMENSION_SECTIONS,    hparams.rope_sections, 4, true);
@@ -384,9 +405,42 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
 
     ggml_tensor * conv_input = build_conv_state(inp, conv_states_all, qkv_mixed, conv_kernel_size, conv_channels, il);
 
-    ggml_tensor * state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
-    state = ggml_reshape_4d(ctx0, state, head_v_dim, head_v_dim, num_v_heads, n_seqs);
-    cb(state, "state_predelta", il);
+    const char * indexed_mode = std::getenv("GGML_ROCM_GDN_INDEXED_STATE");
+    const bool indexed_state = indexed_mode && std::strcmp(indexed_mode, "single-v1") == 0
+        && n_seqs == 1
+        && mctx_cur->get_n_rs() == 1
+        && cparams.n_rs_seq == 2
+        && n_seq_tokens >= 1 && n_seq_tokens <= 3
+        && cparams.fused_gdn_ar && cparams.fused_gdn_ch
+        && head_v_dim == 128 && head_k_dim == 128
+        && num_v_heads == 48 && num_k_heads == 16
+        && ssm_states_all->type == GGML_TYPE_F32
+        && ggml_is_contiguous(ssm_states_all)
+        && ssm_states_all->ne[0] == 786432
+        && ssm_states_all->ne[2] == 1 && ssm_states_all->ne[3] == 1
+        && ssm_states_all->ne[1] == int64_t(mctx_cur->get_size()) * 3
+        && rocm_gdn_indexed_bank_supported(ssm_states_all);
+
+    ggml_tensor * state = nullptr;
+    ggml_tensor * state_dependency = nullptr;
+    if (indexed_state) {
+        const int32_t rs_zero = mctx_cur->get_rs_z();
+        if (rs_zero >= 0) {
+            GGML_ASSERT(rs_zero < ssm_states_all->ne[1]);
+            auto zero_view = ggml_view_1d(ctx0, ssm_states_all, hparams.n_embd_s(),
+                    size_t(rs_zero) * ssm_states_all->nb[1]);
+            state_dependency = ggml_scale_inplace(ctx0, zero_view, 0);
+            ggml_build_forward_expand(gf, state_dependency);
+        }
+
+        state = ggml_reshape_4d(ctx0, ssm_states_all,
+                head_v_dim, head_v_dim, num_v_heads, ssm_states_all->ne[1]);
+        cb(state, "state_indexed_bank", il);
+    } else {
+        state = build_rs(inp, ssm_states_all, hparams.n_embd_s(), n_seqs);
+        state = ggml_reshape_4d(ctx0, state, head_v_dim, head_v_dim, num_v_heads, n_seqs);
+        cb(state, "state_predelta", il);
+    }
 
     ggml_tensor * conv_output_proper = ggml_ssm_conv(ctx0, conv_input, conv_kernel);
     cb(conv_output_proper, "conv_output_raw", il);
@@ -445,7 +499,9 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
     cb(k_conv, "k_conv_predelta", il);
     cb(v_conv, "v_conv_predelta", il);
 
-    ggml_tensor * output = build_recurrent_attn(inp, ssm_states_all, q_conv, k_conv, v_conv, gate, beta, state, il);
+    ggml_tensor * output = build_recurrent_attn(
+            inp, ssm_states_all, q_conv, k_conv, v_conv, gate, beta, state, il,
+            indexed_state ? inp->s_copy_main : nullptr, state_dependency);
 
     // z: [head_dim, n_heads, n_tokens, n_seqs] -> [n_heads * n_tokens * n_seqs, head_dim]
     ggml_tensor * z_2d = ggml_reshape_4d(ctx0, z, head_v_dim, num_v_heads, n_seq_tokens, n_seqs);

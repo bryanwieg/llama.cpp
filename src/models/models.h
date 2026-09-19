@@ -97,7 +97,9 @@ struct llm_build_delta_net_base : public llm_graph_context {
             ggml_tensor *        g,
             ggml_tensor *        b,
             ggml_tensor *        s,
-            int                  il);
+            int                  il,
+            ggml_tensor *        state_rows = nullptr,
+            ggml_tensor *        state_dependency = nullptr);
 };
 
 struct llm_build_rwkv6_base : public llm_graph_context {
