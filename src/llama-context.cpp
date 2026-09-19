@@ -15,6 +15,7 @@
 
 #include <cinttypes>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -1341,6 +1342,89 @@ bool llama_context::set_adapter_cvec(
 }
 
 llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, llm_graph_type gtype, llama_memory_context_i * mctx, ggml_status & ret) {
+    // Opt-in scheduler scratch-arena trim adapted from ROCmFPX investigation
+    // commit 7b08993509fd7718dd18e8c8ed839ddcc0d8874a.
+    //
+    // The historical investigation included GDN audits, output-head census and
+    // address logging. Those are intentionally omitted here. This keeps only the
+    // measured allocator behavior: after a large prefill leaves an oversized GPU
+    // compute arena behind, replace the scheduler before a 1..3-token graph so the
+    // next allocation is sized to the small decode graph. Persistent model, memory
+    // state and output buffers are not replaced.
+    static const int arena_trim_mode = [] {
+        const char * value = std::getenv("GGML_ROCM_ARENA_TRIM");
+        if (value && std::strcmp(value, "1") == 0) {
+            return 1;
+        }
+        if (value && std::strcmp(value, "matrix-v1") == 0) {
+            return 2;
+        }
+        return 0;
+    }();
+
+    if (arena_trim_mode && cparams.ctx_type == LLAMA_CONTEXT_TYPE_DEFAULT) {
+        const bool audited_context = arena_trim_mode == 1
+            ? cparams.n_ctx == 8192
+            : (cparams.n_ctx == 8192 || cparams.n_ctx == 16384 || cparams.n_ctx == 32768);
+
+        // Preserve the safety envelope used by the validated investigation.
+        if (model.arch != LLM_ARCH_QWEN35 ||
+            cparams.n_rs_seq != 2 ||
+            cparams.n_seq_max != 1 ||
+            cparams.pipeline_parallel ||
+            src_ctx ||
+            cparams.ctx_other ||
+            !audited_context ||
+            cparams.n_ubatch != 512) {
+            GGML_ABORT("Arena trim requires single-sequence Qwen35 max2/ubatch512 and an explicitly allowed context");
+        }
+
+        size_t gpu_arena_bytes = 0;
+        int gpu_count = 0;
+        for (auto backend : backend_ptrs) {
+            if (ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                ++gpu_count;
+                gpu_arena_bytes += ggml_backend_sched_get_buffer_size(sched.get(), backend);
+            }
+        }
+
+        if (gpu_count != 1) {
+            GGML_ABORT("Arena trim requires exactly one GPU backend");
+        }
+
+        // Hysteresis prevents scheduler recreation for ordinary small-arena
+        // fluctuations. Larger prompt graphs remain free to grow the replacement
+        // scheduler again on demand.
+        if (ubatch.n_tokens >= 1 && ubatch.n_tokens <= 3 && gpu_arena_bytes > 32u*1024u*1024u) {
+            ggml_backend_sched_synchronize(sched.get());
+
+            size_t max_nodes = 0;
+            for (const auto & graph_res : gf_res_prev) {
+                max_nodes = std::max(max_nodes, graph_res->get_max_nodes());
+            }
+            max_nodes = std::max(max_nodes, gf_res_reserve->get_max_nodes());
+
+            ggml_backend_sched_ptr replacement(ggml_backend_sched_new(
+                backend_ptrs.data(),
+                backend_buft.data(),
+                backend_ptrs.size(),
+                max_nodes,
+                cparams.pipeline_parallel,
+                cparams.op_offload));
+
+            if (!replacement) {
+                ret = GGML_STATUS_ALLOC_FAILED;
+                return nullptr;
+            }
+
+            for (auto & graph_res : gf_res_prev) {
+                graph_res->reset();
+            }
+            gf_res_reserve->reset();
+            gf_res_prev_active = nullptr;
+            sched = std::move(replacement);
+        }
+    }
     if (mctx && !mctx->apply()) {
         LLAMA_LOG_ERROR("%s: failed to apply memory context\n", __func__);
         ret = GGML_STATUS_FAILED;
