@@ -1,0 +1,148 @@
+name: Manual PR build
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to build"
+        required: true
+        type: number
+      build_all:
+        description: "Build all targets instead of the focused validation targets"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: manual-pr-build-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-info:
+    name: Resolve PR
+    runs-on: ubuntu-24.04
+    outputs:
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      head_ref: ${{ steps.pr.outputs.head_ref }}
+      title: ${{ steps.pr.outputs.title }}
+
+    steps:
+      - name: Resolve pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          data="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+
+          state="$(jq -r '.state' <<<"$data")"
+          if [[ "$state" != "open" ]]; then
+            echo "PR #${PR_NUMBER} is not open (state=${state})"
+            exit 1
+          fi
+
+          head_repo="$(jq -r '.head.repo.full_name // empty' <<<"$data")"
+          if [[ "$head_repo" != "$GITHUB_REPOSITORY" ]]; then
+            echo "This workflow intentionally builds same-repository PRs only."
+            echo "PR head repo: $head_repo"
+            exit 1
+          fi
+
+          {
+            echo "head_sha=$(jq -r '.head.sha' <<<"$data")"
+            echo "head_ref=$(jq -r '.head.ref' <<<"$data")"
+            echo "title=$(jq -r '.title' <<<"$data")"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "PR #${PR_NUMBER}: $(jq -r '.title' <<<"$data")"
+          echo "Head: $(jq -r '.head.ref' <<<"$data") @ $(jq -r '.head.sha' <<<"$data")"
+
+  cpu:
+    name: CPU compile
+    needs: pr-info
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.pr-info.outputs.head_sha }}
+          fetch-depth: 1
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build-cpu \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF \
+            -DLLAMA_CURL=OFF
+
+      - name: Build focused targets
+        if: ${{ !inputs.build_all }}
+        run: |
+          cmake --build build-cpu --parallel --target \
+            llama-cli \
+            llama-server \
+            test-backend-ops
+
+      - name: Build all targets
+        if: ${{ inputs.build_all }}
+        run: cmake --build build-cpu --parallel
+
+  hip-rdna4:
+    name: HIP gfx1201 compile
+    needs: pr-info
+    runs-on: ubuntu-22.04
+    container: rocm/dev-ubuntu-22.04:7.2.1
+
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential \
+            cmake \
+            git \
+            ninja-build \
+            rocblas-dev \
+            hipblas-dev \
+            libssl-dev
+
+      - name: Checkout PR head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.pr-info.outputs.head_sha }}
+          fetch-depth: 1
+
+      - name: Configure HIP RDNA4
+        shell: bash
+        run: |
+          cmake -S . -B build-hip -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_HIP_COMPILER="$(hipconfig -l)/clang" \
+            -DGPU_TARGETS=gfx1201 \
+            -DGGML_HIP=ON \
+            -DGGML_HIP_EXPORT_METRICS=OFF \
+            -DLLAMA_CURL=OFF
+
+      - name: Build focused targets
+        if: ${{ !inputs.build_all }}
+        shell: bash
+        run: |
+          cmake --build build-hip --parallel --target \
+            llama-cli \
+            llama-server \
+            test-backend-ops
+
+      - name: Build all targets
+        if: ${{ inputs.build_all }}
+        shell: bash
+        run: cmake --build build-hip --parallel
