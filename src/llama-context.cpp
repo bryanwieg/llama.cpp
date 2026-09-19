@@ -1392,6 +1392,50 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             GGML_ABORT("Arena trim requires exactly one GPU backend");
         }
 
+        // Optional full-chunk prefill reservation adapted from historical commit
+        // 69a36a358b152e6dbde9e6410ce1b7f2808ab3a7. This is deliberately coupled
+        // to the arena-trim safety envelope above and remains disabled by default.
+        static const bool prefill_reserve = [] {
+            const char * value = std::getenv("GGML_ROCM_PREFILL_RESERVE");
+            return value && std::strcmp(value, "1") == 0;
+        }();
+
+        // Only reserve on an actual full microbatch when the live scheduler still
+        // has a small arena. Rebuild the full-memory prompt plan in the SAME
+        // scheduler; the synthetic reservation graph is never executed or applied.
+        if (prefill_reserve &&
+            ubatch.n_tokens == cparams.n_ubatch &&
+            gpu_arena_bytes <= 32u*1024u*1024u) {
+            ggml_backend_sched_synchronize(sched.get());
+
+            if (!memory) {
+                GGML_ABORT("Prefill reservation requires model memory");
+            }
+
+            auto full = memory->init_full();
+            if (!full) {
+                GGML_ABORT("Failed to obtain full reservation context");
+            }
+
+            if (!graph_reserve(cparams.n_ubatch, 1, cparams.n_ubatch, full.get())) {
+                ret = GGML_STATUS_ALLOC_FAILED;
+                return nullptr;
+            }
+
+            size_t reserved_gpu_bytes = 0;
+            for (auto backend : backend_ptrs) {
+                if (ggml_backend_dev_type(ggml_backend_get_device(backend)) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                    reserved_gpu_bytes += ggml_backend_sched_get_buffer_size(sched.get(), backend);
+                }
+            }
+
+            // Preserve the original experiment's diagnostic ceiling. This is a
+            // guardrail, not an assertion about physical VRAM residency.
+            if (reserved_gpu_bytes > 1024u*1024u*1024u) {
+                GGML_ABORT("Prefill reserve exceeds diagnostic budget");
+            }
+        }
+
         // Hysteresis prevents scheduler recreation for ordinary small-arena
         // fluctuations. Larger prompt graphs remain free to grow the replacement
         // scheduler again on demand.
