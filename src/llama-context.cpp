@@ -1372,7 +1372,6 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             cparams.n_rs_seq != 2 ||
             cparams.n_seq_max != 1 ||
             cparams.pipeline_parallel ||
-            src_ctx ||
             cparams.ctx_other ||
             !audited_context ||
             cparams.n_ubatch != 512) {
@@ -1444,9 +1443,9 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
 
             size_t max_nodes = 0;
             for (const auto & graph_res : gf_res_prev) {
-                max_nodes = std::max(max_nodes, graph_res->get_max_nodes());
+                max_nodes = std::max(max_nodes, static_cast<size_t>(graph_res->get_max_nodes()));
             }
-            max_nodes = std::max(max_nodes, gf_res_reserve->get_max_nodes());
+            max_nodes = std::max(max_nodes, static_cast<size_t>(gf_res_reserve->get_max_nodes()));
 
             ggml_backend_sched_ptr replacement(ggml_backend_sched_new(
                 backend_ptrs.data(),
