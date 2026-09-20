@@ -30,7 +30,7 @@ These priorities are intentionally stable. Short-term work belongs in the living
 6. Build reusable infrastructure that can support future dense -> specialist -> sparse-MoE experimentation without coupling the fork to one model checkpoint.
 7. Treat benchmark methodology, provenance, and reproducibility as part of the implementation, not as optional notes.
 
-## Skills are part of the workflow
+## Agent skills
 
 Repository-local agent plugins are first-class project tooling. Do not imitate a skill from memory when the actual skill is available; invoke or read the skill and follow its workflow.
 
@@ -40,6 +40,20 @@ The current plugin architecture and update procedures are documented in:
 - [Ponytail integration](docs/agents/ponytail.md)
 
 If the local plugins are not installed, use the repository setup scripts rather than creating an ad-hoc installation.
+
+### Issue tracker
+
+Project issues/specs live in the private fork's GitHub Issues. See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
+
+For work intended for upstream `ggml-org/llama.cpp`, the upstream contribution rules later in this file still apply and take precedence over private-fork automation conventions.
+
+### Triage labels
+
+Use the default Matt Pocock triage vocabulary for this private fork: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Use a **single-context** domain-doc layout. Read root `CONTEXT.md` when it exists and relevant ADRs under `docs/adr/`; create or evolve them lazily through the domain-modeling workflow rather than scaffolding empty documents. See [docs/agents/domain.md](docs/agents/domain.md).
 
 ### Skill routing
 
