@@ -70,17 +70,11 @@ Purpose: avoid a state-row gather by using indexed GDN recurrent-state bank acce
 
 This path includes capability/fallback handling and should remain narrow until stronger end-to-end evidence supports expansion.
 
-## Deferred experimental concept
+## Historical parity decisions
 
-### Direct-write GDN fusion
+A detailed commit-by-commit record of old-build behavior that was intentionally omitted, superseded, converted to configuration, or left for retest lives in [historical-working-build-parity.md](historical-working-build-parity.md).
 
-Historical source:
-
-`6f688e7af125bf2b512160c9683b22e81d373038`
-
-This remains reference/WIP material. It changes graph recognition/capture and direct state writeback behavior and has a substantially larger correctness/concurrency blast radius than the indexed-read optimization.
-
-Do not port it merely because it compiles. Treat it as a fresh optimization experiment requiring isolated correctness and performance evidence.
+Notably, the historical direct-write GDN fusion commit `6f688e7af125bf2b512160c9683b22e81d373038` is now considered **superseded**, because current llama.cpp contains native GDN cache-write fusion. Do not port the old WIP implementation unless current upstream's mechanism demonstrates a concrete regression on the target workload.
 
 ## Superseded or rejected historical work
 
