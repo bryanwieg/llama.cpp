@@ -1,0 +1,19 @@
+{
+  "name": "llama-cpp-local",
+  "interface": {
+    "displayName": "llama.cpp local plugins"
+  },
+  "plugins": [
+    {
+      "name": "ponytail",
+      "source": {
+        "source": "local",
+        "path": "./third_party/ponytail"
+      },
+      "category": "Productivity",
+      "policy": {
+        "installation": "AVAILABLE"
+      }
+    }
+  ]
+}
