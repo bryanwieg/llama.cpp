@@ -1,3 +1,137 @@
+# Private fork operating contract
+
+This section defines the durable operating contract for the private `bryanwieg/llama.cpp` fork. It takes precedence over the upstream contributor instructions below **only for work that remains in this private fork**. If a change is intended for submission to `ggml-org/llama.cpp`, follow the upstream rules below in full.
+
+## Mission
+
+Maintain a high-performance, technically conservative llama.cpp fork for local inference and development, with particular attention to AMD/ROCm systems.
+
+Optimize for:
+
+- correctness first
+- measurable throughput and latency improvements
+- preservation of model quality and supported capabilities
+- low blast radius and easy rollback
+- understandable mechanisms that a human maintainer can reason about
+- reuse of current upstream infrastructure before adding fork-specific machinery
+- local-first operation without depending on remote compute
+
+Prefer general mechanisms that benefit a class of workloads over model-specific hacks. A narrow optimization is acceptable when it is explicitly gated, measurable, and does not distort the default upstream path.
+
+## Long-term priorities
+
+These priorities are intentionally stable. Short-term work belongs in the living documents under `docs/agents/`.
+
+1. Stay close enough to upstream that useful llama.cpp changes can continue to flow into the fork without heroic rebases.
+2. Preserve numerical correctness, model behavior, vision/OCR support, MTP/speculative behavior, and long-context capability while optimizing performance.
+3. Improve AMD/ROCm performance through evidence-driven allocator, graph, kernel, memory-layout, and scheduling work.
+4. Prefer reversible, opt-in experiments until repeated measurements justify making behavior broader or default.
+5. Keep the fork maintainable: avoid duplicate subsystems, speculative abstractions, and patches that solve one benchmark by making the architecture harder to understand.
+6. Build reusable infrastructure that can support future dense -> specialist -> sparse-MoE experimentation without coupling the fork to one model checkpoint.
+7. Treat benchmark methodology, provenance, and reproducibility as part of the implementation, not as optional notes.
+
+## Agent skills
+
+Repository-local agent plugins are first-class project tooling. Do not imitate a skill from memory when the actual skill is available; invoke or read the skill and follow its workflow.
+
+The current plugin architecture and update procedures are documented in:
+
+- [Matt Pocock skills integration](docs/agents/mattpocock-skills.md)
+- [Ponytail integration](docs/agents/ponytail.md)
+
+If the local plugins are not installed, use the repository setup scripts rather than creating an ad-hoc installation.
+
+### Issue tracker
+
+Project issues/specs live in the private fork's GitHub Issues. See [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md).
+
+For work intended for upstream `ggml-org/llama.cpp`, the upstream contribution rules later in this file still apply and take precedence over private-fork automation conventions.
+
+### Triage labels
+
+Use the default Matt Pocock triage vocabulary for this private fork: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Use a **single-context** domain-doc layout. Read root `CONTEXT.md` when it exists and relevant ADRs under `docs/adr/`; create or evolve them lazily through the domain-modeling workflow rather than scaffolding empty documents. See [docs/agents/domain.md](docs/agents/domain.md).
+
+### Skill routing
+
+Use the narrowest applicable workflow.
+
+- **Ponytail** is the default implementation discipline. Its normal `full` mode should remain active unless the user changes it. It governs solution size, YAGNI, reuse, and avoiding needless complexity. Do not duplicate its rules here.
+- For non-trivial engineering work, use **`ask-matt`** when the best workflow is unclear.
+- Use **`grill-with-docs`** before a consequential design change when requirements, boundaries, or terminology are unresolved.
+- Use **`diagnosing-bugs`** for regressions, intermittent failures, difficult performance anomalies, or bugs where the root cause is not already demonstrated.
+- Use **`research`** when a decision depends on primary-source technical evidence rather than local code alone.
+- Use **`tdd`** when behavior can be captured by a tight, useful red/green loop. Do not manufacture broad test infrastructure merely to satisfy a ritual.
+- Use **`codebase-design`** or **`domain-modeling`** when the hard part is architectural placement, interfaces, ownership, or vocabulary.
+- Use **`to-spec`** and **`to-tickets`** for work that will span multiple sessions or needs an explicit dependency graph; use **`implement`** to execute that plan.
+- Use **`resolving-merge-conflicts`** for non-trivial merge or rebase conflicts; resolve intent, not just text.
+- Before finalizing a substantive code change, run **`code-review`** for correctness/spec conformance and **`ponytail-review`** as a separate complexity/over-engineering pass.
+
+Skills complement project constraints; they do not override them.
+
+## Engineering method
+
+Before changing code:
+
+1. Read the relevant implementation and call paths.
+2. Read the applicable living agent docs listed below.
+3. Establish the baseline, failure mode, or measurable success criterion.
+4. Check whether current upstream already contains the fix or a superseding design before porting historical fork work.
+
+When implementing:
+
+- Prefer semantic adaptation to current upstream over replaying old commits mechanically.
+- Keep unrelated allocator, graph, kernel, model, and tooling changes separate.
+- Gate risky performance experiments behind explicit opt-in controls until evidence supports broader use.
+- Preserve fallback behavior and backend capability checks where an optimization is backend-specific.
+- Do not trade model quality, correctness, or supported features for tokens/sec unless the user explicitly chooses that tradeoff.
+- Minimize blast radius. The smallest **correct mechanism** wins, not the smallest diff in isolation.
+- Remove temporary diagnostics, tracing, and investigation scaffolding before considering work complete unless they have durable operational value.
+
+## Performance evidence
+
+Performance claims require measurements on representative hardware and workload.
+
+Prefer:
+
+- same binary for ON/OFF comparisons where possible
+- repeated runs rather than one-shot numbers
+- ABBA or similarly drift-resistant ordering
+- separate prompt/prefill latency from decode throughput
+- recording context size, batch/ubatch, quantization, KV precision, MTP/speculation settings, and relevant environment gates
+- checking output/correctness and MTP proposed/accepted behavior in addition to speed
+
+A compile success is not performance validation.
+
+## Repository actions and CI
+
+For this private fork, the user may explicitly authorize agents to create branches, commits, and pull requests. Such authorization applies only to this fork and does not relax the upstream contribution rules below.
+
+Keep CI deliberate and economical:
+
+- no broad automatic workflow matrices
+- no automatic CI merely because a PR was opened or updated
+- no automatic CI on merge/push unless the user changes this policy
+- prefer manual, targeted Windows/Linux x64 builds relevant to the AMD/ROCm workload
+- do not spend CI minutes on unrelated CUDA, ARM, macOS, CANN, SYCL, Android, RISC-V, Snapdragon, packaging, or UI matrices unless a task specifically requires them
+
+## Living project context
+
+Do not turn transient facts into permanent instructions. Load these documents as needed and update them when reality changes:
+
+- [Current state and priorities](docs/agents/current-state.md) - active direction, near-term work, and current assumptions
+- [Technical context](docs/agents/technical-context.md) - hardware, build/runtime environment, model/workload details
+- [Optimization history](docs/agents/optimization-history.md) - ported optimizations, provenance, evidence, and deferred/superseded work
+- [Matt Pocock skills integration](docs/agents/mattpocock-skills.md) - plugin packaging and update procedure
+- [Ponytail integration](docs/agents/ponytail.md) - plugin behavior, hook trust, and update procedure
+
+If a fact is likely to change with a new model, GPU, branch, benchmark, upstream release, or experiment, it belongs in one of those living documents rather than in this contract.
+
+---
+
 # Instructions for llama.cpp
 
 > [!IMPORTANT]
