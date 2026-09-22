@@ -1443,7 +1443,9 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
 
             size_t max_nodes = 0;
             for (const auto & graph_res : gf_res_prev) {
-                max_nodes = std::max(max_nodes, static_cast<size_t>(graph_res->get_max_nodes()));
+                if (graph_res) {
+                    max_nodes = std::max(max_nodes, static_cast<size_t>(graph_res->get_max_nodes()));
+                }
             }
             max_nodes = std::max(max_nodes, static_cast<size_t>(gf_res_reserve->get_max_nodes()));
 
@@ -1461,7 +1463,9 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             }
 
             for (auto & graph_res : gf_res_prev) {
-                graph_res->reset();
+                if (graph_res) {
+                    graph_res->reset();
+                }
             }
             gf_res_reserve->reset();
             gf_res_prev_active = nullptr;
